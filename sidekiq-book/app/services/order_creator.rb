@@ -13,16 +13,11 @@ class OrderCreator
   def complete_order(order)
     payments_response = charge(order)
     if payments_response.success?
-
-      email_response       = send_email(order)
-      fulfillment_response = request_fulfillment(order)
-
       order.update!(
         charge_id: payments_response.charge_id,
         charge_completed_at: Time.zone.now,
-        charge_successful: true,
-        email_id: email_response.email_id,
-        fulfillment_request_id: fulfillment_response.request_id)
+        charge_successful: true)
+      SendOrderNotificationEmailJob.perform_async(order.id)
     else
       order.update!(
         charge_completed_at: Time.zone.now,
@@ -31,7 +26,21 @@ class OrderCreator
       )
     end
   end
-  # END:main-logic
+
+  def send_notification_email(order)
+    potential_matching_emails = email.search_emails(order.email, CONFIRMATION_EMAIL_TEMPLATE_ID)
+    email_response = potential_matching_emails.detect { |email|
+      email.template_data['order_id'] == order.id
+    }
+    email_response ||= send_email(order)
+    order.update!(email_id: email_response.email_id)
+    RequestOrderFulfillmentJob.perform_async(order.id)
+  end
+
+  def request_order_fulfillment(order)
+    fulfillment_response = request_fulfillment(order)
+    order.update!(fulfillment_request_id: fulfillment_response.request_id)
+  end
 
 private
 
@@ -65,6 +74,7 @@ private
   def request_fulfillment(order)
     fulfillment_metadata = {}
     fulfillment_metadata[:order_id] = order.id
+    fulfillment_metadata[:idempotency_key] = "idempotency_key-order-#{order.id}" 
     fulfillment.request_fulfillment(
       order.user.id,
       order.address,

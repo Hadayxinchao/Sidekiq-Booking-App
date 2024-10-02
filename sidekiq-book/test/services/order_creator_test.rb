@@ -42,4 +42,39 @@ class OrderCreatorTest < ActiveSupport::TestCase
     refute_nil resulting_order.fulfillment_request_id
   end
 
+  test "send_notification_email uses existing email" do
+    email_service_wrapper = EmailServiceWrapper.new
+
+    order = Order.create!(
+      email: "pat@example.com",
+      address: "123 Main St",
+      quantity: 1,
+      product: create(:product),
+      user: create(:user),
+    )
+
+    previously_sent_email = email_service_wrapper.send_email(
+      order.email,
+      OrderCreator::CONFIRMATION_EMAIL_TEMPLATE_ID,
+      { order_id: order.id }
+    )
+    email_id = previously_sent_email.email_id
+    refute_nil email_id, 'expected an email to have been sent'
+
+    matching_emails = email_service_wrapper.search_emails(
+      order.email,
+      OrderCreator::CONFIRMATION_EMAIL_TEMPLATE_ID
+    )
+    num_matching_emails = matching_emails.count
+
+    @order_creator.send_notification_email(order)
+    order.reload
+
+    assert_equal email_id, order.email_id, "A different email was sent than the previously-sent one"
+    matching_emails = email_service_wrapper.search_emails(
+      order.email,
+      OrderCreator::CONFIRMATION_EMAIL_TEMPLATE_ID
+    )
+    assert_equal num_matching_emails, matching_emails.count, "Expected the same number of emails to be sent"
+  end
 end
